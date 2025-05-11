@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Audio Visualizer</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            color: white;
+            max-width: 300px;
+            transition: all 0.3s ease;
+        }
+        #controls.hidden {
+            transform: translateX(-320px);
+            opacity: 0;
+        }
+        #toggleControls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 100;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="range"], select, button {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #audioSource {
+            margin-top: 10px;
+        }
+        #fileInfo {
+            font-size: 12px;
+            margin-top: 5px;
+        }
+    </style>
+
+<base target="_self">
+
+
+    <button id="toggleControls">☰</button>
+    <div id="controls">
+        <div class="control-group">
+            <label for="audioSource">Audio Source:</label>
+            <select id="audioSource">
+                <option value="file">Audio File</option>
+                <option value="mic">Microphone</option>
+            </select>
+            <input type="file" id="fileInput" accept="audio/*" style="display: none;">
+            <button id="selectFile">Select Audio File</button>
+            <div id="fileInfo">No file selected</div>
+            <button id="playPause" disabled="">Play</button>
+        </div>
+        <div class="control-group">
+            <label for="particleCount">Particle Count: <span id="particleCountValue">1000</span></label>
+            <input type="range" id="particleCount" min="100" max="5000" step="100" value="1000">
+        </div>
+        <div class="control-group">
+            <label for="sizeScale">Size Scale: <span id="sizeScaleValue">1.0</span></label>
+            <input type="range" id="sizeScale" min="0.1" max="3" step="0.1" value="1.0">
+        </div>
+        <div class="control-group">
+            <label for="colorScheme">Color Scheme:</label>
+            <select id="colorScheme">
+                <option value="rainbow">Rainbow</option>
+                <option value="fire">Fire</option>
+                <option value="ocean">Ocean</option>
+                <option value="monochrome">Monochrome</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="sensitivity">Sensitivity: <span id="sensitivityValue">1.0</span></label>
+            <input type="range" id="sensitivity" min="0.1" max="3" step="0.1" value="1.0">
+        </div>
+        <button id="randomize">Randomize</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script>
+        // Scene setup
+        let scene, camera, renderer, particles, particleCount = 1000;
+        let audioContext, analyser, dataArray, audioSource;
+        let isPlaying = false;
+        let mouseX = 0, mouseY = 0;
+
+        // Initialize Three.js scene
+        function init() {
+            // Create scene
+            scene = new THREE.Scene();
+
+            // Create camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 30;
+
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(0x000000);
+            document.body.appendChild(renderer.domElement);
+
+            // Create particles
+            createParticles();
+
+            // Setup audio
+            setupAudio();
+
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('mousemove', onMouseMove);
+            document.getElementById('toggleControls').addEventListener('click', toggleControls);
+            document.getElementById('selectFile').addEventListener('click', () => document.getElementById('fileInput').click());
+            document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+            document.getElementById('playPause').addEventListener('click', togglePlayback);
+            document.getElementById('audioSource').addEventListener('change', changeAudioSource);
+            document.getElementById('particleCount').addEventListener('input', updateParticleCount);
+            document.getElementById('sizeScale').addEventListener('input', updateSizeScale);
+            document.getElementById('colorScheme').addEventListener('change', updateColorScheme);
+            document.getElementById('sensitivity').addEventListener('input', updateSensitivity);
+            document.getElementById('randomize').addEventListener('click', randomizeSettings);
+
+            // Start animation loop
+            animate();
+        }
+
+        function createParticles() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const colors = new Float32Array(particleCount * 3);
+            const sizes = new Float32Array(particleCount);
+
+            // Initialize particles in a sphere
+            for (let i = 0; i < particleCount; i++) {
+                const radius = Math.random() * 20;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                positions[i * 3] = radius * Math.sin(phi) * Math.cos(theta);
+                positions[i * 3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+                positions[i * 3 + 2] = radius * Math.cos(phi);
+
+                // Random colors
+                colors[i * 3] = Math.random();
+                colors[i * 3 + 1] = Math.random();
+                colors[i * 3 + 2] = Math.random();
+
+                sizes[i] = 0.5;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+            const material = new THREE.PointsMaterial({
+                size: 0.5,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.8,
+                blending: THREE.AdditiveBlending
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+        }
+
+        function setupAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+            } catch (e) {
+                console.error('Audio initialization error:', e);
+                alert('Web Audio API is not supported in your browser');
+            }
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('fileInfo').textContent = file.name;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                audioContext.decodeAudioData(e.target.result, function(buffer) {
+                    if (audioSource) {
+                        audioSource.disconnect();
+                        if (audioSource.stop) audioSource.stop();
+                    }
+
+                    audioSource = audioContext.createBufferSource();
+                    audioSource.buffer = buffer;
+                    audioSource.connect(analyser);
+                    audioSource.connect(audioContext.destination);
+                    audioSource.loop = true;
+
+                    document.getElementById('playPause').disabled = false;
+                    if (isPlaying) {
+                        audioSource.start(0);
+                    }
+                });
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function togglePlayback() {
+            if (!audioSource) return;
+
+            isPlaying = !isPlaying;
+            const button = document.getElementById('playPause');
+
+            if (isPlaying) {
+                button.textContent = 'Pause';
+                if (audioSource.start) {
+                    audioSource.start(0);
+                }
+            } else {
+                button.textContent = 'Play';
+                if (audioSource.stop) {
+                    audioSource.stop();
+                }
+            }
+        }
+
+        function changeAudioSource() {
+            const source = document.getElementById('audioSource').value;
+            if (source === 'mic') {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        if (audioSource) {
+                            audioSource.disconnect();
+                            if (audioSource.stop) audioSource.stop();
+                        }
+                        audioSource = audioContext.createMediaStreamSource(stream);
+                        audioSource.connect(analyser);
+                        document.getElementById('playPause').disabled = true;
+                        isPlaying = true;
+                    })
+                    .catch(err => {
+                        console.error('Microphone access error:', err);
+                        alert('Could not access microphone. Please check permissions.');
+                    });
+            } else {
+                document.getElementById('playPause').disabled = !audioSource;
+            }
+        }
+
+        function updateParticleCount() {
+            const newCount = parseInt(document.getElementById('particleCount').value);
+            document.getElementById('particleCountValue').textContent = newCount;
+
+            if (newCount !== particleCount) {
+                particleCount = newCount;
+                scene.remove(particles);
+                if (particles.geometry) particles.geometry.dispose();
+                if (particles.material) particles.material.dispose();
+                createParticles();
+            }
+        }
+
+        function updateSizeScale() {
+            const scale = parseFloat(document.getElementById('sizeScale').value);
+            document.getElementById('sizeScaleValue').textContent = scale.toFixed(1);
+            particles.material.size = scale;
+        }
+
+        function updateColorScheme() {
+            const scheme = document.getElementById('colorScheme').value;
+            const colors = particles.geometry.attributes.color.array;
+
+            for (let i = 0; i < particleCount; i++) {
+                switch (scheme) {
+                    case 'rainbow':
+                        colors[i * 3] = Math.sin(i * 0.1) * 0.5 + 0.5;
+                        colors[i * 3 + 1] = Math.sin(i * 0.1 + 2) * 0.5 + 0.5;
+                        colors[i * 3 + 2] = Math.sin(i * 0.1 + 4) * 0.5 + 0.5;
+                        break;
+                    case 'fire':
+                        colors[i * 3] = Math.random() * 0.5 + 0.5;
+                        colors[i * 3 + 1] = Math.random() * 0.3;
+                        colors[i * 3 + 2] = 0;
+                        break;
+                    case 'ocean':
+                        colors[i * 3] = 0;
+                        colors[i * 3 + 1] = Math.random() * 0.5;
+                        colors[i * 3 + 2] = Math.random() * 0.5 + 0.5;
+                        break;
+                    case 'monochrome':
+                        const val = Math.random() * 0.5 + 0.5;
+                        colors[i * 3] = val;
+                        colors[i * 3 + 1] = val;
+                        colors[i * 3 + 2] = val;
+                        break;
+                }
+            }
+
+            particles.geometry.attributes.color.needsUpdate = true;
+        }
+
+        function updateSensitivity() {
+            const sensitivity = parseFloat(document.getElementById('sensitivity').value);
+            document.getElementById('sensitivityValue').textContent = sensitivity.toFixed(1);
+        }
+
+        function randomizeSettings() {
+            // Random particle count
+            const randomCount = Math.floor(Math.random() * 4900) + 100;
+            document.getElementById('particleCount').value = randomCount;
+            updateParticleCount();
+
+            // Random size scale
+            const randomScale = (Math.random() * 2.9 + 0.1).toFixed(1);
+            document.getElementById('sizeScale').value = randomScale;
+            updateSizeScale();
+
+            // Random color scheme
+            const schemes = ['rainbow', 'fire', 'ocean', 'monochrome'];
+            const randomScheme = schemes[Math.floor(Math.random() * schemes.length)];
+            document.getElementById('colorScheme').value = randomScheme;
+            updateColorScheme();
+
+            // Random sensitivity
+            const randomSensitivity = (Math.random() * 2.9 + 0.1).toFixed(1);
+            document.getElementById('sensitivity').value = randomSensitivity;
+            updateSensitivity();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function onMouseMove(event) {
+            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+        }
+
+        function toggleControls() {
+            const controls = document.getElementById('controls');
+            controls.classList.toggle('hidden');
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Rotate particles
+            particles.rotation.x += 0.001;
+            particles.rotation.y += 0.002;
+
+            // Audio visualization
+            if (analyser && audioSource) {
+                analyser.getByteFrequencyData(dataArray);
+
+                const positions = particles.geometry.attributes.position.array;
+                const sensitivity = parseFloat(document.getElementById('sensitivity').value);
+
+                for (let i = 0; i < particleCount; i++) {
+                    const index = i % dataArray.length;
+                    const value = dataArray[index] / 255;
+
+                    // Original position
+                    const originalX = positions[i * 3];
+                    const originalY = positions[i * 3 + 1];
+                    const originalZ = positions[i * 3 + 2];
+
+                    // Audio reaction
+                    positions[i * 3 + 1] = originalY + (value * 10 * sensitivity - originalY) * 0.1;
+
+                    // Mouse interaction
+                    const dx = mouseX * 20 - originalX;
+                    const dy = mouseY * 20 - originalY;
+                    const distance = Math.sqrt(dx * dx + dy * dy + originalZ * originalZ);
+                    const force = 50 / (distance * distance + 1);
+
+                    positions[i * 3] += dx * force * 0.01;
+                    positions[i * 3 + 1] += dy * force * 0.01;
+                }
+
+                particles.geometry.attributes.position.needsUpdate = true;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // Start the application
+        init();
+    </script>
+
+              
+          
+                
+          
+              
